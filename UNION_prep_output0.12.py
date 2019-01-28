@@ -16,6 +16,7 @@
 import os, tkinter, tkinter.filedialog, tkinter.messagebox
 import csv
 import pandas as pd
+import numpy as np
 
 
 # from tqdm import tqdm
@@ -193,16 +194,16 @@ check_input.loc[check_input['RBS_受注現法仕入先コード']=='SPCM','RBS_�
 check_input.drop(MNG_header, axis=1, inplace=True)
 
 # スキーマと生産拠点が一致していないRECはエラーファイルへ
-# 一致してるファイルのみ
-check_input=(((check_input['ACE参照スキーマ']=='MPA') & (check_input['RBS_受注現法仕入先コード']=='7017')) |
-                      ((check_input['ACE参照スキーマ']=='AMI') & (check_input['RBS_受注現法仕入先コード']=='3764')) |
-                      ((check_input['ACE参照スキーマ']=='CHN') & (check_input['RBS_受注現法仕入先コード']=='0FCN')) |
-                      ((check_input['ACE参照スキーマ']=='SPCM') & (check_input['RBS_受注現法仕入先コード']=='SPCM')))
 # 一致していないRECは別だし
-SUP_NG=~(((check_input['ACE参照スキーマ']=='MPA') & (check_input['RBS_受注現法仕入先コード']=='7017')) |
+SUP_NG = check_input[~(((check_input['ACE参照スキーマ']=='MPA') & (check_input['RBS_受注現法仕入先コード']=='7017')) |
                       ((check_input['ACE参照スキーマ']=='AMI') & (check_input['RBS_受注現法仕入先コード']=='3764')) |
                       ((check_input['ACE参照スキーマ']=='CHN') & (check_input['RBS_受注現法仕入先コード']=='0FCN')) |
-                      ((check_input['ACE参照スキーマ']=='SPCM') & (check_input['RBS_受注現法仕入先コード']=='SPCM')))
+                      ((check_input['ACE参照スキーマ']=='SPCM') & (check_input['RBS_受注現法仕入先コード']=='SPCM')))]
+# 一致してるファイルのみ、SUP_NGを生成してからcheck_inputを上書き
+check_input = check_input[(((check_input['ACE参照スキーマ']=='MPA') & (check_input['RBS_受注現法仕入先コード']=='7017')) |
+                      ((check_input['ACE参照スキーマ']=='AMI') & (check_input['RBS_受注現法仕入先コード']=='3764')) |
+                      ((check_input['ACE参照スキーマ']=='CHN') & (check_input['RBS_受注現法仕入先コード']=='0FCN')) |
+                      ((check_input['ACE参照スキーマ']=='SPCM') & (check_input['RBS_受注現法仕入先コード']=='SPCM')))]
 
 # 結合ファイルとdefaultファイルを比較し従来拠点にフラグを付ける
 make_flg = check_input.append(default, sort=False)
@@ -216,6 +217,19 @@ check_input = make_flg
 # 正常処理したRECの件数
 n_True=check_input['従来生産拠点フラグ'] == 1
 num_True=n_True.sum()
+
+#従来生産拠点がないREC件数の取得
+n_jri_e = make_flg.loc[::,['番号', '従来生産拠点フラグ']]#番号と従来生産拠点フラグのみ
+n_jri_e = n_jri_e.sort_values(['番号', '従来生産拠点フラグ'])
+n_jri_e.drop_duplicates(subset=['番号'], keep='first', inplace=True)#重複削除
+n_jri_e = n_jri_e[n_jri_e['従来生産拠点フラグ'].isnull()]#従来生産拠点がnullのみ残す
+num_jri_e=len(n_jri_e)#件数数える
+
+#従来生産拠点フラグがないものをcheck_inputから削除
+check_input = pd.merge(check_input,n_jri_e,on='番号', how='left', indicator = True)
+check_input = check_input[check_input['_merge'] == 'left_only']
+check_input.drop(['_merge', '従来生産拠点フラグ_y'], axis=1, inplace=True)
+check_input = check_input.rename(columns={'従来生産拠点フラグ_x': '従来生産拠点フラグ'})
 
 # インプットファイルと結合し重複しないRECのインプットファイルのみ残す
 prep_input_error = prep_input.append(check_input, sort=False)
@@ -238,25 +252,13 @@ prep_input_error.drop(['JST変換受注日・JST変換見積回答日_e','JST変
 #インプットから復活させるRECのインナーコードの先頭2文字をEにする
 #納区、UF対象外、エラーコードありは除く
 prep_input_error.loc[((prep_input_error['納入区分'] == '00') | (prep_input_error['納入区分'] == '0L')) & (prep_input_error['アンフィット種別'] == '0'),'インナーコード'] = 'EE' + prep_input_error['インナーコード'].str[-9:]
+# 見積りUF RECの従来生産拠点フラグを削除
+prep_input_error.loc[prep_input_error['見積有効日'].notnull(), '従来生産拠点フラグ'] = ''
 #正常処理したRECと復活させるRECの結合
 check_input = check_input.append(prep_input_error, sort=False)
 
-#従来生産拠点がないREC件数の取得
-n_jri_e = make_flg.loc[::,['番号', '従来生産拠点フラグ']]#番号と従来生産拠点フラグのみ
-n_jri_e = n_jri_e.sort_values(['番号', '従来生産拠点フラグ'])
-n_jri_e.drop_duplicates(subset=['番号'], keep='first', inplace=True)#重複削除
-n_jri_e = n_jri_e[n_jri_e['従来生産拠点フラグ'].isnull()]#従来生産拠点がnullのみ残す
-num_jri_e=len(n_jri_e)#件数数える
-
-#従来生産拠点フラグがないものをcheck_inputから削除
-check_input = pd.merge(check_input,n_jri_e,on='番号', how='left', indicator = True)
-check_input = check_input[check_input['_merge'] == 'left_only']
-check_input.drop(['_merge', '従来生産拠点フラグ_y'], axis=1, inplace=True)
-check_input = check_input.rename(columns={'従来生産拠点フラグ_x': '従来生産拠点フラグ'})
+#check_inputの件数をカウント
 num_check_input=len(check_input)
-
-# 見積りUF RECの従来生産拠点フラグを削除
-check_input['従来生産拠点フラグ'].replace(check_input['見積有効日'].isnull(), np.nan)
 
 # FCNT→FCNXへ
 check_input.loc[check_input['ACE仕入先コード']=='FCNT', 'ACE仕入先コード'] = 'FCNX'
@@ -269,17 +271,19 @@ jri_e = pd.merge(error_list, n_jri_e, on='番号', how='inner')
 
 #件数を出力するファイルの件数を取得
 num_prep_input = len(prep_input)
-num_error=len(prep_input_error)
+num_error=len(prep_input_error[prep_input_error['見積有効日'].isnull()])
+num_QT=len(prep_input_error[prep_input_error['見積有効日'].notnull()])
 num_sup_ng=len(SUP_NG)
 
 #処理件数を合計
-num_total = num_True + num_error + num_jri_e
+num_total = num_True + num_error + num_QT
 
 #string型にしてから行数格納のリストを作成
 num_prep_input = str(num_prep_input)
 num_check_input=str(num_check_input)
 num_True=str(num_True)
 num_error=str(num_error)
+num_QT=str(num_QT)
 num_jri_e=str(num_jri_e)
 num_total = str(num_total)
 num_sup_ng = str(num_sup_ng)
@@ -288,13 +292,15 @@ num = ['A/準備処理inputREC数：',',',num_prep_input,'\n',
        'B/check_input 行数：',',',num_check_input,'\n',
        'C/RBS対象REC数：',',',num_True,'\n',
        'D/シミュレーション対象REC数：',',',num_error,'\n',
-       'E/従来生産拠点フラグなし：',',',num_jri_e,'\n',
-       'C+E+D/処理件数合計：',',',num_total,'\n',
-       'F/サプライヤコードNG：',',',num_sup_ng]
+       'E/見積りREC数：',',',num_QT,'\n',
+       'C+D+E/処理件数合計：',',',num_total,'\n',
+       'F/従来生産拠点フラグなし：',',',num_jri_e,'\n',
+       'G/サプライヤコードNG行数：',',',num_sup_ng]
 
 # ファイルアウトプット
 check_input.to_csv('check_input.tsv', sep='\t', encoding=font, quotechar='"', line_terminator='\n', index=False)
 error_list.to_csv('error_list.tsv', sep='\t', encoding=font, quotechar='"', line_terminator='\n', index=False)
+SUP_NG.to_csv('Supplier_CD_NG.tsv', sep='\t', encoding=font, quotechar='"', line_terminator='\n', index=False)
 jri_e.to_csv('従来生産拠点なし_error_list.tsv', sep='\t', encoding=font, quotechar='"', line_terminator='\n', index=False)
 with open('log.csv', mode='w') as f:
     f.writelines(num)
